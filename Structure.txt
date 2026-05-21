@@ -1,0 +1,33 @@
+mainfolder/
+│
+├── docker-compose.yml
+│
+├── java/
+│   ├── Dockerfile
+│   └── project/ 
+│
+├── airflow/
+│   ├── dags/
+│   └── logs/
+│
+├── notebooks/
+│   └── (tus notebooks .ipynb)
+│
+├── hdfs/
+│   ├── namenode/
+│   └── datanode/
+│
+├── sql/
+│
+│
+├── jupyter/
+│   └── Dockerfile
+│   
+│
+│
+├── rstudio/
+│   └── Dockerfile
+│
+└── README.md
+
+

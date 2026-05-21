@@ -1,0 +1,231 @@
+version: "1.2"
+
+services:
+  # -------------------------
+  # SQL SERVER
+  # -------------------------
+  sqlserver:
+    image: mcr.microsoft.com/mssql/server:2022-latest
+    container_name: sqlserver
+    environment:
+      ACCEPT_EULA: "Y"
+      SA_PASSWORD: "YourStrong!Passw0rd"
+    ports:
+      - "1433:1433"
+    volumes:
+      - sqlserver_data:/var/opt/mssql
+    networks:
+      - devnet
+
+  # -------------------------
+  # MYSQL
+  # -------------------------
+  mysql:
+    image: mysql:8
+    container_name: mysql
+    environment:
+      MYSQL_ROOT_PASSWORD: root
+      MYSQL_DATABASE: testdb
+    ports:
+      - "3306:3306"
+    volumes:
+      - mysql_data:/var/lib/mysql
+    networks:
+      - devnet
+
+  # -------------------------
+  # MONGODB
+  # -------------------------
+  mongodb:
+    image: mongo:6
+    container_name: mongodb
+    ports:
+      - "27017:27017"
+    volumes:
+      - mongo_data:/data/db
+    networks:
+      - devnet
+
+  # -------------------------
+  # JUPYTER + PYSPARK
+  # -------------------------
+  jupyter:
+    image: jupyter/pyspark-notebook:latest
+    container_name: jupyter
+    ports:
+      - "8888:8888"
+    volumes:
+      - ./notebooks:/home/jovyan/work
+    environment:
+      - JUPYTER_ENABLE_LAB=yes
+      - JUPYTER_TOKEN=
+      - JUPYTER_PASSWORD=
+      - JUPYTER_ALLOW_INSECURE_WRITES=true
+    networks:
+      - devnet
+
+  # -------------------------
+  # RStudio
+  # -------------------------
+  rstudio:
+    build:
+      context: ./rstudio
+      dockerfile: Dockerfile
+    container_name: rstudio
+    environment:
+      - PASSWORD=devpass
+      - USER=rstudio
+    ports:
+      - "8787:8787"
+    volumes:
+      - ./rstudio:/home/rstudio
+    networks:
+      - devnet
+
+
+
+  # -------------------------
+  # HADOOP BASE (OBLIGATORIO)
+  # -------------------------
+  hadoop-base:
+    image: bde2020/hadoop-base:2.0.0-hadoop3.2.1-java8
+    container_name: hadoop-base
+    environment:
+      - CLUSTER_NAME=hadoop
+    networks:
+      - devnet
+
+  # -------------------------
+  # HDFS NAMENODE
+  # -------------------------
+  namenode:
+    image: bde2020/hadoop-namenode:2.0.0-hadoop3.2.1-java8
+    container_name: namenode
+    environment:
+      - CLUSTER_NAME=hadoop
+      - CORE_CONF_fs_defaultFS=hdfs://namenode:8020
+    ports:
+      - "9870:9870"
+    volumes:
+      - ./hdfs/namenode:/hadoop/dfs/name
+    networks:
+      - devnet
+    depends_on:
+      - hadoop-base
+
+  # -------------------------
+  # HDFS DATANODE
+  # -------------------------
+  datanode:
+    image: bde2020/hadoop-datanode:2.0.0-hadoop3.2.1-java8
+    container_name: datanode
+    environment:
+      - CLUSTER_NAME=hadoop
+      - CORE_CONF_fs_defaultFS=hdfs://namenode:8020
+      - SERVICE_PRECONDITION=namenode:9870
+    ports:
+      - "9864:9864"
+    volumes:
+      - ./hdfs/datanode:/hadoop/dfs/data
+    networks:
+      - devnet
+    depends_on:
+      - namenode
+
+  # -------------------------
+  # AIRFLOW + POSTGRES
+  # -------------------------
+  airflow-postgres:
+    image: postgres:15
+    container_name: airflow-postgres
+    environment:
+      POSTGRES_USER: airflow
+      POSTGRES_PASSWORD: airflow
+      POSTGRES_DB: airflow
+    volumes:
+      - airflow_pgdata:/var/lib/postgresql/data
+    networks:
+      - devnet
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U airflow"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # NUEVO: Servicio para inicializar la DB
+  airflow-init:
+    image: apache/airflow:2.9.0
+    container_name: airflow-init
+    depends_on:
+      airflow-postgres:
+        condition: service_healthy
+    environment:
+      AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://airflow:airflow@airflow-postgres/airflow
+      AIRFLOW__CORE__LOAD_EXAMPLES: "false"
+    # Este comando crea las tablas y el usuario admin inicial
+    command: >
+      bash -c "airflow db init && 
+      airflow users create --username admin --password admin --firstname Luis --lastname Trocco --role Admin --email admin@example.com"
+    networks:
+      - devnet
+
+  airflow-webserver:
+    image: apache/airflow:2.9.0
+    container_name: airflow-webserver
+    depends_on:
+      airflow-init:
+        condition: service_completed_successfully
+    environment:
+      AIRFLOW__CORE__LOAD_EXAMPLES: "false"
+      AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://airflow:airflow@airflow-postgres/airflow
+      AIRFLOW__WEBSERVER__WEB_SERVER_HOST: "0.0.0.0"
+    ports:
+      - "8080:8080"
+    volumes:
+      - ./airflow/dags:/opt/airflow/dags
+      - ./airflow/logs:/opt/airflow/logs
+    command: webserver
+    networks:
+      - devnet
+
+  airflow-scheduler:
+    image: apache/airflow:2.9.0
+    container_name: airflow-scheduler
+    depends_on:
+      airflow-init:
+        condition: service_completed_successfully
+    environment:
+      AIRFLOW__CORE__LOAD_EXAMPLES: "false"
+      AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://airflow:airflow@airflow-postgres/airflow
+    volumes:
+      - ./airflow/dags:/opt/airflow/dags
+      - ./airflow/logs:/opt/airflow/logs
+    command: scheduler
+    networks:
+      - devnet
+
+  # -------------------------
+  # JAVA IDE
+  # -------------------------
+  java-ide:
+    build:
+      context: .
+      dockerfile: java/Dockerfile
+    container_name: java-ide
+    environment:
+      PASSWORD: "devpass"
+    ports:
+      - "8081:8080"
+    volumes:
+      - ./java/project:/home/coder/project
+    networks:
+      - devnet
+
+networks:
+  devnet:
+
+volumes:
+  sqlserver_data:
+  mysql_data:
+  mongo_data:
+  airflow_pgdata:
